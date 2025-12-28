@@ -1,0 +1,1270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>JEEV: Mental Health & Wellness Hub</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase Modules (exposed to window.firebase object) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import {
+            getAuth,
+            signInAnonymously,
+            signInWithCustomToken,
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            sendPasswordResetEmail,
+            GoogleAuthProvider,
+            signInWithPopup,
+            signOut,
+            updateProfile
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import {
+            getFirestore,
+            doc,
+            setDoc,
+            collection,
+            onSnapshot,
+            serverTimestamp,
+            getDoc
+        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose used Firebase helpers under window.firebase so main script can call them the same way
+        window.firebase = {
+            initializeApp,
+            getAuth,
+            signInAnonymously,
+            signInWithCustomToken,
+            onAuthStateChanged,
+            signInWithEmailAndPassword,
+            createUserWithEmailAndPassword,
+            sendPasswordResetEmail,
+            GoogleAuthProvider,
+            signInWithPopup,
+            signOut,
+            updateProfile,
+            getFirestore,
+            doc,
+            setDoc,
+            collection,
+            onSnapshot,
+            serverTimestamp,
+            getDoc
+        };
+    </script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+
+        :root { --glass-bg: rgba(255,255,255,0.16); --glass-border: rgba(255,255,255,0.22); }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+            transition: background 0.5s ease;
+            background: linear-gradient(135deg, #a7e6ff 0%, #5bbff2 60%);
+            overflow: hidden;
+        }
+
+        /* Subtle blurred decorative background layers */
+        .bg-decor {
+            position: fixed;
+            inset: -10%;
+            z-index: 0;
+            filter: blur(40px) saturate(110%);
+            opacity: .65;
+            pointer-events: none;
+            background: radial-gradient(circle at 10% 20%, rgba(245,250,255,0.9) 0%, transparent 20%),
+                        radial-gradient(circle at 80% 80%, rgba(203,240,255,0.8) 0%, transparent 20%),
+                        radial-gradient(circle at 60% 20%, rgba(166,255,221,0.5) 0%, transparent 25%);
+        }
+
+        .glassmorphism-card {
+            position: relative;
+            z-index: 10;
+            box-shadow: 0 8px 32px rgba(31,38,135,0.18);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            border-radius: 20px;
+            max-width: 90%;
+            width: 500px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            max-height: 90vh;
+            height: 600px;
+            transition: background 0.5s ease, border 0.5s ease;
+            background: rgba(255,255,255,0.12);
+            border: 1px solid rgba(255,255,255,0.12);
+        }
+
+        .chat-header { transition: background 0.4s ease, color 0.4s ease; }
+
+        .nav-tab { transition: all .25s ease; cursor: pointer; }
+
+        /* message area */
+        #chat-messages { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+
+        .message-box { padding: .75rem 1.25rem; border-radius: 12px; max-width: 85%; word-wrap: break-word; }
+
+        .user-message { background-color: #3b82f6; color: white; margin-left: auto; }
+        .bot-message { background-color: rgba(255,255,255,0.85); color: #1f2937; }
+
+        /* Typing indicator */
+        .typing-indicator span { display:inline-block; width:8px; height:8px; margin:0 1px; background:#3b82f6; border-radius:50%; animation:bounce 1.4s infinite both;}
+        .typing-indicator span:nth-child(1){animation-delay:-0.32s}
+        .typing-indicator span:nth-child(2){animation-delay:-0.16s}
+        @keyframes bounce { 0%,80%,100%{transform:scale(0);} 40%{transform:scale(1);} }
+
+        /* Auth overlay */
+        #auth-overlay {
+            position: fixed; inset: 0; z-index: 40;
+            display:flex; align-items:center; justify-content:center;
+            padding: 1.5rem;
+            background: linear-gradient(180deg, rgba(0,0,0,0.12), rgba(255,255,255,0.02));
+            backdrop-filter: blur(4px);
+        }
+        .auth-card {
+            width: 100%;
+            max-width: 420px;
+            border-radius: 20px;
+            padding: 28px 26px 26px;
+            background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(255,255,255,0.88));
+            box-shadow: 0 20px 60px rgba(15,23,42,0.35);
+            transform: translateY(20px) scale(.98);
+            opacity: 0;
+            animation: auth-pop .48s cubic-bezier(.2,.9,.2,1) forwards;
+            backdrop-filter: blur(12px);
+        }
+        @keyframes auth-pop { to { transform: translateY(0) scale(1); opacity:1; } }
+
+        /* small helpers */
+        .min-h-1_1rem { min-height: 1.1rem; }
+
+        /* breathing circle */
+        #breathing-circle { width:150px; height:150px; border-radius:50%; background:#3b82f6; display:flex; align-items:center; justify-content:center; transition:transform 3s ease-in-out; }
+        .breathing-in { animation: breathe-scale-in 4s linear infinite; }
+        .breathing-out { animation: breathe-scale-out 6s linear infinite; }
+        @keyframes breathe-scale-in { 0%{transform:scale(1);} 50%{transform:scale(1.5);} 100%{transform:scale(1);} }
+        @keyframes breathe-scale-out { 0%{transform:scale(1.5);} 50%{transform:scale(1);} 100%{transform:scale(1.5);} }
+
+        /* small responsive */
+        @media (max-width:520px) {
+            .glassmorphism-card { width: 100%; height: 100vh; border-radius: 12px; }
+            body { padding: 0.5rem; }
+        }
+        /* ===== Dark Mode Styles ===== */
+body[data-theme="dark"] {
+  background: linear-gradient(to bottom right, #0f172a, #1e293b);
+  color: white;
+}
+
+/* Chat container */
+body[data-theme="dark"] .glassmorphism-card {
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+/* Message bubbles */
+body[data-theme="dark"] .message {
+  background: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+
+/* Input */
+body[data-theme="dark"] input,
+body[data-theme="dark"] textarea {
+  background: rgba(0, 0, 0, 0.35) !important;
+  border-color: rgba(255, 255, 255, 0.2);
+  color: white !important;
+}
+
+/* Tabs */
+body[data-theme="dark"] nav button {
+  color: #cbd5e1;
+}
+
+body[data-theme="dark"] nav .active-tab {
+  border-bottom: 2px solid #38bdf8;
+  color: #38bdf8;
+}
+
+/* Icons become brighter */
+body[data-theme="dark"] svg {
+  stroke: #f8fafc !important;
+}
+
+/* User bubble */
+body[data-theme="dark"] .user-bubble {
+  background: #2563eb !important;
+  color: white !important;
+}
+
+/* Bot bubble */
+body[data-theme="dark"] .bot-bubble {
+  background: rgba(255, 255, 255, 0.15) !important;
+  color: #e2e8f0 !important;
+}
+ </style>
+</head>
+<body data-theme="light">
+    <div class="bg-decor" aria-hidden="true"></div>
+
+    <!-- ============= AUTH OVERLAY ============= -->
+    <div id="auth-overlay" role="dialog" aria-modal="true">
+        <div class="auth-card">
+            <div class="flex flex-col items-center mb-4">
+                <div class="w-14 h-14 rounded-2xl bg-gradient-to-tr from-emerald-400 via-sky-400 to-indigo-500 flex items-center justify-center shadow-lg mb-3">
+                    <!-- Calm leaf & brain logo (simple SVG) -->
+                    <svg viewBox="0 0 64 64" class="w-8 h-8 text-white" aria-hidden="true" role="img">
+                        <g fill="currentColor">
+                            <!-- leaf -->
+                            <path d="M32 6c-1.5 0-7 3.5-11 7.5C13.5 21 12 28 12 28s6.5-1 13-6.5C38 15 48 10 48 10s-6-4-16-4z" opacity="0.95"/>
+                            <!-- brain-like lines -->
+                            <path d="M12 32c0 0 6-10 20-6 14 4 14 12 14 12s-3 9-14 12C18 54 12 36 12 32z" opacity="0.9"/>
+                        </g>
+                    </svg>
+                </div>
+
+                <h1 class="text-2xl font-extrabold tracking-wide text-slate-800">Welcome to JEEV</h1>
+                <p class="text-xs text-slate-500 mt-1 text-center max-w-xs">“Your calm space to breathe, reflect & heal.”</p>
+            </div>
+
+            <div class="flex mb-4 bg-slate-100 rounded-full p-1 text-xs font-semibold">
+                <button id="auth-tab-login" class="flex-1 rounded-full py-2 bg-white shadow-sm text-slate-800">Login</button>
+                <button id="auth-tab-register" class="flex-1 rounded-full py-2 text-slate-500">Register</button>
+            </div>
+
+            <!-- status / validation -->
+            <p id="auth-status" class="text-xs min-h-1_1rem text-center text-emerald-600 mb-1"></p>
+
+            <!-- LOGIN FORM -->
+            <form id="login-form" class="space-y-3 mt-1" autocomplete="on">
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-slate-600">Email</label>
+                    <input id="login-email" name="login-email" type="email" required placeholder="Enter email"
+                        class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-slate-600">Password</label>
+                    <input id="login-password" name="login-password" type="password" required placeholder="Enter password"
+                        class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-sky-400" />
+                </div>
+
+                <p id="login-error" class="text-xs text-red-500 min-h-1_1rem"></p>
+
+                <div class="flex items-center justify-between text-xs mb-1">
+                    <button type="button" id="forgot-password" class="text-sky-600 hover:underline">Forgot password?</button>
+                    <button type="button" id="guest-login" class="text-slate-500 hover:text-slate-700">Continue as guest</button>
+                </div>
+
+                <button type="submit" id="login-submit" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 text-white text-sm font-semibold shadow-md hover:shadow-lg transition">
+                    Login
+                </button>
+
+                <div class="relative py-2 text-center text-[10px] text-slate-400">
+                    <span class="px-2 bg-transparent relative z-10">or</span>
+                    <div class="absolute left-0 top-1/2 w-full h-px bg-slate-200 -z-10"></div>
+                </div>
+
+                <button type="button" id="google-login" class="w-full py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-700 bg-white flex items-center justify-center gap-2 hover:bg-slate-50">
+                    <!-- Google icon -->
+                    <svg viewBox="0 0 533.5 544.3" class="w-4 h-4" aria-hidden="true">
+                        <path fill="#4285f4" d="M533.5 278.4c0-18.5-1.5-37-4.7-54.9H272v103.9h147.4c-6.3 34.7-25.7 64.1-54.9 83.7v69.4h88.7c52-47.9 80.3-118.5 80.3-202.1z"/>
+                        <path fill="#34a853" d="M272 544.3c73.2 0 134.8-24.1 179.8-65.1l-88.7-69.4c-24.7 16.6-56.5 26-91.1 26-69.9 0-129.1-47.2-150.3-110.5H29.7v69.8C74.2 486.1 167.2 544.3 272 544.3z"/>
+                        <path fill="#fbbc04" d="M121.7 325.3c-10.3-30.7-10.3-63.8 0-94.5v-69.8H29.7c-39.9 79.9-39.9 173.9 0 253.8z"/>
+                        <path fill="#ea4335" d="M272 107.7c37.9-.6 74.3 13.5 102.1 39.5l76-76C398.7 24.5 337.1.1 272 0 167.2 0 74.2 58.2 29.7 160.9l92 69.8C142.9 154.9 202.1 107.7 272 107.7z"/>
+                    </svg>
+                    <span>Continue with Google</span>
+                </button>
+            </form>
+
+            <!-- REGISTER FORM -->
+            <form id="register-form" class="space-y-3 mt-1 hidden" autocomplete="on">
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-slate-600">Full name</label>
+                    <input id="register-name" name="register-name" type="text" placeholder="Enter your name" required
+                        class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-slate-600">Email</label>
+                    <input id="register-email" name="register-email" type="email" placeholder="Enter email" required
+                        class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-slate-600">Password</label>
+                    <input id="register-password" name="register-password" type="password" placeholder="At least 6 characters" required
+                        class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs font-medium text-slate-600">Confirm password</label>
+                    <input id="register-confirm" name="register-confirm" type="password" placeholder="Re-enter password" required
+                        class="w-full px-3 py-2 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+                </div>
+
+                <p id="register-error" class="text-xs text-red-500 min-h-1_1rem"></p>
+
+                <button type="submit" id="register-submit" class="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm font-semibold shadow-md hover:shadow-lg transition">
+                    Create Account
+                </button>
+            </form>
+        </div>
+    </div>
+    <!-- ========== END AUTH OVERLAY ========== -->
+
+    <!-- ============= MAIN APP CARD ============= -->
+    <div class="glassmorphism-card" role="main" aria-live="polite">
+        <header class="chat-header p-4 flex items-center justify-between">
+            <div class="flex items-center">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <h1 class="text-xl font-bold tracking-wider">JEEV Hub</h1>
+            </div>
+
+            <div class="flex items-center space-x-3">
+                <span id="user-id-display" class="text-xs opacity-80 italic hidden sm:inline"></span>
+
+                <button type="button" id="logout-button" title="Logout" class="hidden p-1.5 rounded-full hover:bg-black/10 transition">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6A2.25 2.25 0 005.25 5.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l4-4m0 0l4 4m-4-4v12"/>
+                    </svg>
+                </button>
+
+                <button type="button" id="theme-toggle" title="Toggle Dark/Light Mode" class="transition-colors duration-300">
+                    <svg id="sun-icon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/>
+                    </svg>
+                    <svg id="moon-icon" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <nav class="flex justify-around p-2 border-b-2 border-opacity-20 border-white/30">
+            <button id="tab-chat" class="nav-tab active p-2 rounded-lg font-semibold text-sm w-1/3">Chat</button>
+            <button id="tab-mood" class="nav-tab p-2 rounded-lg font-semibold text-sm w-1/3">Mood</button>
+            <button id="tab-breathe" class="nav-tab p-2 rounded-lg font-semibold text-sm w-1/3">Breathe</button>
+        </nav>
+
+        <div class="flex-grow overflow-y-auto">
+            <!-- Chat -->
+            <div id="view-chat" class="content-view h-full flex flex-col">
+                <div id="chat-messages" class="flex-grow p-4 space-y-4 overflow-y-auto">
+                    <div class="flex">
+                        <div class="message-box bot-message">
+                            Hello there. I'm JEEV, and I'm here to listen without judgment. Take a deep breath and tell me what's on your mind.
+                        </div>
+                    </div>
+                </div>
+
+                <form id="chat-form" class="input-area p-4" autocomplete="off">
+                    <div class="flex space-x-2">
+                        <button type="button" id="mic-button" title="Voice Input (STT)" class="bg-red-500 hover:bg-red-600 text-white p-3 rounded-full shadow-lg transition transform hover:scale-105 disabled:bg-gray-400">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7v0a7 7 0 01-7-7v0m14 0V9a5 5 0 00-5-5H12a5 5 0 00-5 5v2m14 0h-2m-10 0H5"></path>
+                            </svg>
+                        </button>
+
+                        <input type="text" id="user-input" placeholder="Share your thoughts or click the mic to speak..." required class="flex-grow p-3 rounded-full border-none focus:outline-none transition duration-300 focus:ring-2 focus:ring-blue-500" />
+
+                        <button type="submit" id="send-button" title="Send Message" class="bg-blue-600 hover:bg-blue-700 text-white p-3 rounded-full shadow-lg transition transform hover:scale-105 disabled:bg-gray-400">
+                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="flex justify-end items-center mt-3">
+                        <label for="tts-toggle" class="text-sm mr-2 select-none font-medium" id="tts-label">Read responses aloud (TTS)</label>
+                        <label class="tts-switch">
+                            <input type="checkbox" id="tts-toggle" />
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Mood -->
+            <div id="view-mood" class="content-view h-full p-6 hidden">
+                <h2 class="text-2xl font-bold mb-4 border-b pb-2">Mood Check-in</h2>
+                <p class="mb-6 opacity-80">Rate your overall mood today (1=Awful, 10=Great). Your data is private and for trend analysis.</p>
+
+                <div class="flex flex-col items-center mb-8 p-4 rounded-lg bg-black/10">
+                    <span id="mood-label" class="text-3xl font-extrabold text-blue-500 mb-4">5 - Neutral</span>
+                    <input type="range" min="1" max="10" value="5" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer" id="mood-slider" />
+                    <div class="flex justify-between w-full text-xs mt-2 opacity-70">
+                        <span>1: Awful</span>
+                        <span>10: Great</span>
+                    </div>
+                </div>
+
+                <button id="save-mood-btn" class="w-full bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg shadow-md transition disabled:bg-gray-400">
+                    Save Today's Mood
+                </button>
+                <p id="mood-status" class="text-center text-sm mt-3 h-4"></p>
+
+                <div class="mt-8">
+                    <h3 class="text-xl font-semibold mb-3">Past 7 Days Mood Trend</h3>
+                    <div id="mood-chart" class="flex flex-col justify-end p-2 rounded-lg bg-black/10 h-32">
+                        <p id="mood-chart-loading" class="text-center text-sm opacity-60">Loading mood data...</p>
+                    </div>
+                </div>
+                <!-- 🔥 Mood Calendar -->
+                <div id="mood-calendar-section" class="mt-10">
+                <h3 class="text-xl font-semibold mb-3">Mood Calendar</h3>
+
+                <div id="mood-calendar"
+                class="grid grid-cols-7 gap-2 p-3 bg-black/10 rounded-xl min-h-[180px]">
+                </div>
+
+                     <p class="mt-3 text-sm text-center text-slate-500">
+                        ● Darker = Better Mood • Lighter = Lower Mood
+                    </p>
+                </div>
+            </div>
+
+            <!-- Breathe -->
+            <div id="view-breathe" class="content-view h-full hidden flex flex-col items-center justify-center p-6">
+                <h2 class="text-2xl font-bold mb-8">Guided Breathing (4-7-8)</h2>
+
+                <div id="breathing-circle" class="flex items-center justify-center shadow-2xl transition-shadow duration-300">
+                    <span id="breathing-instruction" class="text-white text-xl font-bold text-center select-none">Start</span>
+                </div>
+
+                <p id="breathing-timer" class="text-5xl font-extrabold mt-8 text-blue-500 transition-opacity duration-500">4</p>
+
+                <button id="start-breathing-btn" class="mt-8 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-8 rounded-full shadow-lg transition duration-300">
+                    Start Exercise
+                </button>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+    // ---------- CONFIG ----------
+    const API_KEY = "AIzaSyAs44UndI77ud2fNvR_HKZD6uXwKRRWqZs";
+    const TEXT_MODEL = "gemini-2.5-flash-preview-09-2025";
+    const TTS_MODEL = "gemini-2.5-flash-preview-tts";
+    const TEXT_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent?key=${API_KEY}`;
+    const TTS_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${TTS_MODEL}:generateContent?key=${API_KEY}`;
+    const SYSTEM_PROMPT = "You are 'JEEV', a warm, empathetic, and non-judgemental mental health companion. Listen, validate, encourage reflection. Avoid diagnoses.";
+
+    // ----- Firebase Globals (your confirmed config) -----
+    const appId = 'jeev-a5d93';
+    const firebaseConfig = {
+      apiKey: "AIzaSyB3Q-jL8afsoooRIg7K1D2af5iz2SBG4Ak",
+      authDomain: "jeev-a5d93.firebaseapp.com",
+      projectId: "jeev-a5d93",
+      storageBucket: "jeev-a5d93.firebasestorage.app",
+      messagingSenderId: "1092218750548",
+      appId: "1:1092218750548:web:8b72b251f63762e4d74fc1",
+      measurementId: "G-99ZBGZXT1V"
+    };
+    const initialAuthToken = null;
+
+    // DOM elements
+    const body = document.body;
+    const chatMessages = document.getElementById('chat-messages');
+    const chatForm = document.getElementById('chat-form');
+    const userInput = document.getElementById('user-input');
+    const micButton = document.getElementById('mic-button');
+    const ttsToggle = document.getElementById('tts-toggle');
+    const themeToggle = document.getElementById('theme-toggle');
+    const ttsLabel = document.getElementById('tts-label');
+    const sunIcon = document.getElementById('sun-icon');
+    const moonIcon = document.getElementById('moon-icon');
+    const userIdDisplay = document.getElementById('user-id-display');
+    const logoutButton = document.getElementById('logout-button');
+
+    // Auth overlay elements
+    const authOverlay = document.getElementById('auth-overlay');
+    const authTabLogin = document.getElementById('auth-tab-login');
+    const authTabRegister = document.getElementById('auth-tab-register');
+    const loginForm = document.getElementById('login-form');
+    const registerForm = document.getElementById('register-form');
+    const authStatus = document.getElementById('auth-status');
+    const loginEmail = document.getElementById('login-email');
+    const loginPassword = document.getElementById('login-password');
+    const loginError = document.getElementById('login-error');
+    const forgotPasswordBtn = document.getElementById('forgot-password');
+    const guestLoginBtn = document.getElementById('guest-login');
+    const googleLoginBtn = document.getElementById('google-login');
+    const registerName = document.getElementById('register-name');
+    const registerEmail = document.getElementById('register-email');
+    const registerPassword = document.getElementById('register-password');
+    const registerConfirm = document.getElementById('register-confirm');
+    const registerError = document.getElementById('register-error');
+
+    // Tabs
+    const tabs = { chat: document.getElementById('tab-chat'), mood: document.getElementById('tab-mood'), breathe: document.getElementById('tab-breathe') };
+    const views = { chat: document.getElementById('view-chat'), mood: document.getElementById('view-mood'), breathe: document.getElementById('view-breathe') };
+    let activeTab = 'chat';
+
+    // mood
+    const moodSlider = document.getElementById('mood-slider');
+    const moodLabel = document.getElementById('mood-label');
+    const saveMoodBtn = document.getElementById('save-mood-btn');
+    const moodStatus = document.getElementById('mood-status');
+    const moodChart = document.getElementById('mood-chart');
+    const moodChartLoading = document.getElementById('mood-chart-loading');
+
+    // breathing
+    const breathingCircle = document.getElementById('breathing-circle');
+    const breathingInstruction = document.getElementById('breathing-instruction');
+    const breathingTimer = document.getElementById('breathing-timer');
+    const startBreathingBtn = document.getElementById('start-breathing-btn');
+
+    // firebase state
+    let db = null;
+    let auth = null;
+    let currentUserId = null;
+    let isAuthReady = false;
+    let conversationHistory = [];
+
+    // helper to show/hide overlay
+    function showAuthOverlay(){ authOverlay.style.display = 'flex'; }
+    function hideAuthOverlay(){ authOverlay.style.display = 'none'; }
+
+    // --- Initialize Firebase and wire auth state ---
+    function initFirebase(){
+        try {
+            const app = window.firebase.initializeApp(firebaseConfig);
+            auth = window.firebase.getAuth(app);
+            db = window.firebase.getFirestore(app);
+
+            if (initialAuthToken) {
+                window.firebase.signInWithCustomToken(auth, initialAuthToken).catch(console.error);
+            }
+
+            // react to auth state changes
+            window.firebase.onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    currentUserId = user.uid;
+                    isAuthReady = true;
+                    const name = user.displayName || '';
+                    userIdDisplay.textContent = name ? `Hi, ${name}` : `User ID: ${currentUserId}`;
+                    userIdDisplay.classList.remove('hidden');
+                    logoutButton.classList.remove('hidden');
+                    hideAuthOverlay();
+                    // load user-specific data
+                    if (currentUserId) loadMoodData();
+                } else {
+                    currentUserId = null;
+                    userIdDisplay.textContent = '';
+                    logoutButton.classList.add('hidden');
+                    isAuthReady = true;
+                    // show login overlay
+                    showAuthOverlay();
+                }
+            });
+        } catch (e) {
+            console.error("Firebase initialization failed:", e);
+            authStatus.textContent = "Firebase init failed. Check console.";
+            isAuthReady = true;
+        }
+    }
+
+    // --- Theme toggle helper ---
+    function updateTheme(theme) {
+    body.setAttribute('data-theme', theme);
+
+    if (theme === 'dark') {
+        sunIcon.classList.add('hidden');
+        moonIcon.classList.remove('hidden');
+
+        userInput.classList.add('bg-[#2c2c2c]', 'text-white');
+        userInput.classList.remove('bg-white', 'text-gray-800');
+
+        ttsLabel.style.color = '#e5e7eb';
+    } else {
+        sunIcon.classList.remove('hidden');
+        moonIcon.classList.add('hidden');
+
+        userInput.classList.remove('bg-[#2c2c2c]', 'text-white');
+        userInput.classList.add('bg-white', 'text-gray-800');
+
+        ttsLabel.style.color = '#1f2937';
+    }
+}
+
+
+    // --- Tab switching ---
+    function switchTab(tabName){
+        activeTab = tabName;
+        Object.keys(views).forEach(key => {
+            if (key === tabName) {
+                views[key].classList.remove('hidden');
+                tabs[key].classList.add('active');
+            } else {
+                views[key].classList.add('hidden');
+                tabs[key].classList.remove('active');
+            }
+        });
+        if (tabName === 'mood') loadMoodData();
+        if (tabName === 'breathe') stopBreathingExercise();
+    }
+
+    // --- Mood Tracker ---
+    const MOOD_MAPPING = {1:"Awful 😞",2:"Very Bad 😔",3:"Bad 😟",4:"Low 🙁",5:"Neutral 😐",6:"Okay 🙂",7:"Good 😊",8:"Great 😄",9:"Fantastic 😁",10:"Amazing 🤩"};
+    function updateMoodLabel(){ const value = parseInt(moodSlider.value); moodLabel.textContent = `${value} - ${MOOD_MAPPING[value]}`; }
+
+    async function saveMood(){
+        if (!isAuthReady || !currentUserId || !db) { moodStatus.textContent = "Authentication not ready. Please wait."; return; }
+        saveMoodBtn.disabled = true;
+        moodStatus.textContent = "Saving mood...";
+        const moodValue = parseInt(moodSlider.value);
+        const dateKey = new Date().toISOString().split('T')[0];
+
+        try {
+            const moodDocRef = window.firebase.doc(db, `artifacts/${appId}/users/${currentUserId}/mood_data`, dateKey);
+            const moodData = { mood: moodValue, timestamp: window.firebase.serverTimestamp(), date: dateKey };
+            await window.firebase.setDoc(moodDocRef, moodData);
+            moodStatus.textContent = `Mood ${moodValue} saved successfully!`;
+            setTimeout(()=> moodStatus.textContent = '', 3000);
+        } catch (e) {
+            console.error("Error saving mood:", e);
+            moodStatus.textContent = "Error saving mood. See console.";
+        } finally {
+            saveMoodBtn.disabled = false;
+        }
+    }
+
+    function loadMoodData(){
+        if (!isAuthReady || !currentUserId || !db) { moodChartLoading.textContent = "Waiting for authentication..."; return; }
+        moodChart.innerHTML = '';
+        moodChartLoading.textContent = "Loading mood data...";
+        moodChartLoading.classList.remove('hidden');
+
+        try {
+            const moodCollectionRef = window.firebase.collection(db, `artifacts/${appId}/users/${currentUserId}/mood_data`);
+            window.firebase.onSnapshot(moodCollectionRef, (snapshot) => {
+                const moods = [];
+                snapshot.forEach(d => moods.push(d.data()));
+                moods.sort((a,b) => new Date(a.date) - new Date(b.date));
+                renderMoodChart(moods);
+            }, (err) => {
+                console.error("Error fetching mood data:", err);
+                moodChartLoading.textContent = "Error loading mood data.";
+            });
+        } catch (e) {
+            console.error("loadMoodData error:", e);
+            moodChartLoading.textContent = "Error loading mood data.";
+        }
+    }
+
+    function renderMoodChart(moods){
+        moodChart.innerHTML = '';
+        moodChartLoading.classList.add('hidden');
+        if (!moods || moods.length === 0) {
+            moodChart.innerHTML = '<p class="text-center text-sm opacity-60">No mood data recorded yet.</p>';
+            return;
+        }
+        const recentMoods = moods.slice(-7);
+        const maxMood = 10;
+        recentMoods.forEach(m => {
+            const day = new Date(m.date).toLocaleDateString('en-US', { weekday: 'short' });
+            const moodValue = m.mood;
+            const percent = (moodValue / maxMood) * 100;
+            let colorClass = 'bg-gray-400';
+            if (moodValue >= 8) colorClass = 'bg-green-500';
+            else if (moodValue >= 6) colorClass = 'bg-yellow-500';
+            else if (moodValue >= 4) colorClass = 'bg-orange-500';
+            else colorClass = 'bg-red-500';
+
+            const barContainer = document.createElement('div');
+            barContainer.className = 'flex items-center space-x-2';
+
+            const dayLabel = document.createElement('span');
+            dayLabel.className = 'text-xs w-1/6 opacity-70';
+            dayLabel.textContent = day;
+
+            const bar = document.createElement('div');
+            bar.className = `mood-bar ${colorClass} w-full`;
+            bar.style.width = `${percent}%`;
+            bar.title = `${day}: ${moodValue}`;
+
+            const valueLabel = document.createElement('span');
+            valueLabel.className = 'text-xs font-semibold';
+            valueLabel.textContent = moodValue;
+
+            barContainer.appendChild(dayLabel);
+            barContainer.appendChild(bar);
+            barContainer.appendChild(valueLabel);
+            moodChart.appendChild(barContainer);
+        });
+    }
+
+    // --- Breathing ---
+    let breathingInterval;
+    let breathingActive = false;
+    function startBreathingExercise(){
+        if (breathingActive) return;
+        breathingActive = true;
+        startBreathingBtn.disabled = true;
+        let phase = 'Inhale';
+        let timer = 4;
+        const inhaleDuration = 4, holdDuration = 7, exhaleDuration = 8;
+        breathingInstruction.textContent = "Inhale";
+        breathingTimer.textContent = inhaleDuration;
+        breathingCircle.classList.add('breathing-in');
+        breathingCircle.classList.remove('breathing-out');
+
+        breathingInterval = setInterval(()=> {
+            timer--;
+            breathingTimer.textContent = timer;
+            if (timer <= 0) {
+                if (phase === 'Inhale') {
+                    phase = 'Hold'; timer = holdDuration;
+                    breathingInstruction.textContent = "Hold";
+                    breathingCircle.classList.remove('breathing-in','breathing-out');
+                } else if (phase === 'Hold') {
+                    phase = 'Exhale'; timer = exhaleDuration;
+                    breathingInstruction.textContent = "Exhale";
+                    breathingCircle.classList.remove('breathing-in');
+                    breathingCircle.classList.add('breathing-out');
+                } else {
+                    phase = 'Inhale'; timer = inhaleDuration;
+                    breathingInstruction.textContent = "Inhale";
+                    breathingCircle.classList.add('breathing-in');
+                    breathingCircle.classList.remove('breathing-out');
+                }
+                breathingTimer.textContent = timer;
+            }
+        }, 1000);
+    }
+    function stopBreathingExercise(){ if (!breathingActive) return; clearInterval(breathingInterval); breathingActive=false; startBreathingBtn.disabled=false; breathingInstruction.textContent="Start"; breathingTimer.textContent=4; breathingCircle.classList.remove('breathing-in','breathing-out'); }
+
+    // --- Simple Gemini fetch with backoff (keeps your existing pattern) ---
+    async function exponentialBackoffFetch(url, options, maxRetries=5){
+        for (let i=0;i<maxRetries;i++){
+            try {
+                const response = await fetch(url, options);
+                if (response.status === 429 && i < maxRetries-1) {
+                    const delay = Math.pow(2,i)*1000 + Math.random()*1000;
+                    await new Promise(r => setTimeout(r, delay));
+                    continue;
+                }
+                if (!response.ok) throw new Error(`API response: ${response.status} ${response.statusText}`);
+                return await response.json();
+            } catch (err) {
+                if (i === maxRetries-1) throw err;
+                const delay = Math.pow(2,i)*1000 + Math.random()*500;
+                await new Promise(r => setTimeout(r, delay));
+            }
+        }
+    }
+
+    async function appendMessage(text, sender, useTyping = false) {
+    const container = document.createElement("div");
+    container.className = `flex ${sender === "user" ? "justify-end" : "justify-start"}`;
+
+    const bubble = document.createElement("div");
+    bubble.className = `message-box ${sender}-message mt-2 opacity-0 transition-opacity duration-300`;
+    container.appendChild(bubble);
+    chatMessages.appendChild(container);
+
+    // If no typing animation → instant text
+    if (!useTyping || sender === "user") {
+        bubble.innerHTML = text.replace(/\n/g, "<br>");
+        bubble.classList.remove("opacity-0");
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        return;
+    }
+
+    // Typing animation begins
+    let i = 0;
+    bubble.innerHTML = "";
+    bubble.classList.remove("opacity-0");
+
+    while (i < text.length) {
+        bubble.innerHTML += text[i];
+        i++;
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+        await new Promise(r => setTimeout(r, 15)); // typing speed
+    }
+}
+
+
+   function showTypingIndicator(show) {
+    let indicator = document.getElementById("typing-indicator");
+
+    if (show) {
+        if (!indicator) {
+            indicator = document.createElement("div");
+            indicator.id = "typing-indicator";
+            indicator.className = "flex justify-start";
+
+            indicator.innerHTML = `
+                <div class="message-box bot-message typing-indicator">
+                    <span></span><span></span><span></span>
+                </div>
+            `;
+
+            chatMessages.appendChild(indicator);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+    } else {
+        if (indicator) indicator.remove();
+    }
+
+    userInput.disabled = show;
+    micButton.disabled = show;
+}
+
+
+    // --- TTS helpers (uses Gemini TTS if enabled) ---
+    function base64ToArrayBuffer(base64) {
+        const binary = atob(base64);
+        const len = binary.length;
+        const bytes = new Uint8Array(len);
+        for (let i=0;i<len;i++) bytes[i] = binary.charCodeAt(i);
+        return bytes.buffer;
+    }
+    function pcmToWav(pcm16, sampleRate) {
+        const buffer = new ArrayBuffer(44 + pcm16.length * 2);
+        const view = new DataView(buffer);
+        function writeString(view, offset, str) { for (let i=0;i<str.length;i++) view.setUint8(offset + i, str.charCodeAt(i)); }
+        let offset = 0;
+        writeString(view, offset, 'RIFF'); offset += 4;
+        view.setUint32(offset, 36 + pcm16.length * 2, true); offset += 4;
+        writeString(view, offset, 'WAVE'); offset += 4;
+        writeString(view, offset, 'fmt '); offset += 4;
+        view.setUint32(offset, 16, true); offset += 4;
+        view.setUint16(offset, 1, true); offset += 2;
+        view.setUint16(offset, 1, true); offset += 2;
+        view.setUint32(offset, sampleRate, true); offset += 4;
+        view.setUint32(offset, sampleRate * 2, true); offset += 4;
+        view.setUint16(offset, 2, true); offset += 2;
+        view.setUint16(offset, 16, true); offset += 2;
+        writeString(view, offset, 'data'); offset += 4;
+        view.setUint32(offset, pcm16.length * 2, true); offset += 4;
+        for (let i=0;i<pcm16.length;i++) { view.setInt16(offset, pcm16[i], true); offset += 2; }
+        return new Blob([view], { type: 'audio/wav' });
+    }
+    async function playAudio(textToSpeak) {
+        if (!textToSpeak) return;
+        const payload = {
+            contents: [{ parts: [{ text: textToSpeak }] }],
+            generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } } } },
+            model: TTS_MODEL
+        };
+        try {
+            const options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+            const result = await exponentialBackoffFetch(TTS_API_URL, options);
+            const part = result?.candidates?.[0]?.content?.parts?.[0];
+            const audioData = part?.inlineData?.data;
+            const mimeType = part?.inlineData?.mimeType;
+            if (audioData && mimeType && mimeType.startsWith("audio/L16")) {
+                const sampleRate = 24000;
+                const pcmData = base64ToArrayBuffer(audioData);
+                const pcm16 = new Int16Array(pcmData);
+                const wavBlob = pcmToWav(pcm16, sampleRate);
+                const audioUrl = URL.createObjectURL(wavBlob);
+                const audio = new Audio(audioUrl);
+                audio.play();
+                audio.onended = () => URL.revokeObjectURL(audioUrl);
+            } else {
+                console.warn("TTS returned unexpected format");
+            }
+        } catch (e) { console.error("TTS error:", e); }
+    }
+
+    // --- STT (Web Speech API) ---
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition = null;
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.lang = 'en-US';
+        micButton.addEventListener('click', () => {
+            if (micButton.classList.contains('mic-recording')) {
+                recognition.stop();
+            } else {
+                try {
+                    recognition.start();
+                    micButton.classList.add('mic-recording');
+                    userInput.placeholder = "Listening... Speak now.";
+                } catch (e) {
+                    console.error("Recognition start error:", e);
+                    micButton.classList.remove('mic-recording');
+                    userInput.placeholder = "Speech recognition error. Check microphone access.";
+                }
+            }
+        });
+
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            userInput.value = transcript;
+        };
+
+        recognition.onend = () => {
+            micButton.classList.remove('mic-recording');
+            userInput.placeholder = "Share your thoughts or click the mic to speak...";
+            if (userInput.value.trim().length > 0) chatForm.dispatchEvent(new Event('submit'));
+        };
+        recognition.onerror = (event) => { console.error('Speech recognition error:', event.error); micButton.classList.remove('mic-recording'); userInput.placeholder = "Error listening. Try again."; };
+    } else { micButton.disabled = true; micButton.title = "Voice Input Not Supported by Browser"; }
+
+    // --- Gemini text generation ---
+    async function generateResponse(userMessage) {
+        if (activeTab !== 'chat') return;
+        conversationHistory.push({ role: "user", parts: [{ text: userMessage }] });
+        showTypingIndicator(true);
+
+        const payload = { contents: conversationHistory, systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, tools: [] };
+        const options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) };
+
+        try {
+            const result = await exponentialBackoffFetch(TEXT_API_URL, options);
+            const candidate = result.candidates?.[0];
+            let botResponse = "I'm sorry, I couldn't process that right now. Please try again.";
+            let success = false;
+            if (candidate && candidate.content?.parts?.[0]?.text) {
+                botResponse = candidate.content.parts[0].text;
+                success = true;
+            }
+
+            if (success) conversationHistory.push({ role: "model", parts: [{ text: botResponse }] });
+            else conversationHistory.pop();
+
+           
+            appendMessage(botResponse, "bot", true);
+            if (success && ttsToggle.checked) playAudio(botResponse);
+        } catch (error) {
+            console.error("Gemini API call failed:", error);
+            appendMessage("I'm experiencing a connectivity issue. Please check your network or try again later.", 'bot');
+            conversationHistory.pop();
+        } finally {
+            showTypingIndicator(false);
+        }
+    }
+
+    // --- AUTH HANDLERS ---
+    function setAuthTab(mode) {
+        if (mode === 'login') {
+            authTabLogin.classList.add('bg-white','shadow-sm','text-slate-800');
+            authTabRegister.classList.remove('bg-white','shadow-sm','text-slate-800');
+            authTabRegister.classList.add('text-slate-500');
+            loginForm.classList.remove('hidden');
+            registerForm.classList.add('hidden');
+        } else {
+            authTabRegister.classList.add('bg-white','shadow-sm','text-slate-800');
+            authTabLogin.classList.remove('bg-white','shadow-sm','text-slate-800');
+            authTabLogin.classList.add('text-slate-500');
+            registerForm.classList.remove('hidden');
+            loginForm.classList.add('hidden');
+        }
+        authStatus.textContent = '';
+        loginError.textContent = '';
+        registerError.textContent = '';
+    }
+
+    async function handleLogin(event) {
+        event.preventDefault();
+        if (!auth) return;
+        const email = loginEmail.value.trim();
+        const password = loginPassword.value.trim();
+        loginError.textContent = '';
+        authStatus.textContent = '';
+
+        if (!email || !password) { loginError.textContent = "Please enter both email and password."; return; }
+
+        try {
+            await window.firebase.signInWithEmailAndPassword(auth, email, password);
+            authStatus.textContent = "Welcome back 💙";
+            // don't redirect; auth state will hide overlay and let user access app
+        } catch (err) {
+            console.error(err);
+            // Provide clearer messages for common codes
+            if (err.code === 'auth/user-not-found') loginError.textContent = "No account found with this email.";
+            else if (err.code === 'auth/wrong-password') loginError.textContent = "Incorrect password.";
+            else loginError.textContent = (err.message || "Login failed").replace("Firebase: ", "");
+        }
+    }
+
+    async function handleRegister(event) {
+        event.preventDefault();
+        if (!auth || !db) return;
+        const name = registerName.value.trim();
+        const email = registerEmail.value.trim();
+        const password = registerPassword.value.trim();
+        const confirm = registerConfirm.value.trim();
+        registerError.textContent = '';
+        authStatus.textContent = '';
+
+        if (!name) { registerError.textContent = "Please enter your name."; return; }
+        if (!email || !email.includes("@")) { registerError.textContent = "Please enter a valid email."; return; }
+        if (!password || password.length < 6) { registerError.textContent = "Password must be at least 6 characters."; return; }
+        if (password !== confirm) { registerError.textContent = "Passwords do not match."; return; }
+
+        try {
+            const cred = await window.firebase.createUserWithEmailAndPassword(auth, email, password);
+            const user = cred.user;
+            try { await window.firebase.updateProfile(user, { displayName: name }); } catch (e) { console.warn("Couldn't set displayName:", e); }
+            // Save profile into Firestore under artifacts/{appId}/users/{uid}/profile
+            try {
+                const profileRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/profile`);
+                await window.firebase.setDoc(profileRef, { name, email, createdAt: window.firebase.serverTimestamp() });
+            } catch (e) {
+                console.warn("Couldn't save profile to Firestore:", e);
+            }
+            authStatus.textContent = "Account created. Welcome to JEEV 💚";
+            setAuthTab('login');
+        } catch (err) {
+            console.error(err);
+            registerError.textContent = (err.message || "Registration failed").replace("Firebase: ", "");
+        }
+    }
+
+    async function handleForgotPassword() {
+        if (!auth) return;
+        const email = loginEmail.value.trim();
+        if (!email) { loginError.textContent = "Enter your email first to reset password."; return; }
+        loginError.textContent = '';
+        try {
+            await window.firebase.sendPasswordResetEmail(auth, email);
+            authStatus.textContent = "Reset link sent to your email.";
+        } catch (err) {
+            console.error(err);
+            loginError.textContent = (err.message || "Reset failed").replace("Firebase: ", "");
+        }
+    }
+
+    async function handleGuestLogin() {
+        if (!auth) return;
+        loginError.textContent = '';
+        authStatus.textContent = '';
+        try {
+            await window.firebase.signInAnonymously(auth);
+            authStatus.textContent = "Continuing as guest 🕊️";
+        } catch (err) {
+            console.error(err);
+            loginError.textContent = (err.message || "Guest login failed").replace("Firebase: ", "");
+        }
+    }
+
+    async function handleGoogleLogin() {
+        if (!auth) return;
+        loginError.textContent = '';
+        authStatus.textContent = '';
+        try {
+            const provider = new window.firebase.GoogleAuthProvider();
+            const cred = await window.firebase.signInWithPopup(auth, provider);
+            const user = cred.user;
+            // save/update profile
+            if (db) {
+                try {
+                    const profileRef = window.firebase.doc(db, `artifacts/${appId}/users/${user.uid}/profile`);
+                    await window.firebase.setDoc(profileRef, { name: user.displayName || "", email: user.email || "", provider: "google", lastLogin: window.firebase.serverTimestamp() }, { merge: true });
+                } catch (e) {
+                    console.warn("Couldn't save Google profile:", e);
+                }
+            }
+            authStatus.textContent = "Signed in with Google 🌈";
+        } catch (err) {
+            console.error(err);
+            // Common error when google auth origin not authorized
+            if (err.code === 'auth/unauthorized-domain' || (err.message && err.message.includes('origin'))) {
+                loginError.innerHTML = `Google Sign-in blocked: please add this origin to Firebase Console authorized domains (e.g. ${location.origin}).`;
+            } else {
+                loginError.textContent = (err.message || "Google sign-in failed").replace("Firebase: ", "");
+            }
+        }
+    }
+
+    async function handleLogout(){
+        if (!auth) return;
+        try {
+            await window.firebase.signOut(auth);
+            conversationHistory = [];
+            authStatus.textContent = "";
+            showAuthOverlay();
+        } catch (err) { console.error("Logout error:", err); }
+    }
+
+    // --- Event wiring ---
+  document.addEventListener("DOMContentLoaded", () => {
+    const themeToggle = document.getElementById("theme-toggle");
+    const sunIcon = document.getElementById("sun-icon");
+    const moonIcon = document.getElementById("moon-icon");
+
+    themeToggle.addEventListener("click", () => {
+        const currentTheme = body.getAttribute("data-theme");
+        const newTheme = currentTheme === "light" ? "dark" : "light";
+        body.setAttribute("data-theme", newTheme);
+
+        // Toggle icon visibility
+        if (newTheme === "dark") {
+            sunIcon.classList.add("hidden");
+            moonIcon.classList.remove("hidden");
+        } else {
+            sunIcon.classList.remove("hidden");
+            moonIcon.classList.add("hidden");
+        }
+    });
+});
+
+
+
+    chatForm.addEventListener('submit', (e) => { e.preventDefault(); const message = userInput.value.trim(); if (message) { appendMessage(message, 'user'); generateResponse(message); userInput.value = ''; } });
+
+    moodSlider.addEventListener('input', updateMoodLabel);
+    saveMoodBtn.addEventListener('click', saveMood);
+    startBreathingBtn.addEventListener('click', () => { if (breathingActive) stopBreathingExercise(); else startBreathingExercise(); });
+
+    tabs.chat.addEventListener('click', () => switchTab('chat'));
+    tabs.mood.addEventListener('click', () => switchTab('mood'));
+    tabs.breathe.addEventListener('click', () => switchTab('breathe'));
+
+    authTabLogin.addEventListener('click', () => setAuthTab('login'));
+    authTabRegister.addEventListener('click', () => setAuthTab('register'));
+    loginForm.addEventListener('submit', handleLogin);
+    registerForm.addEventListener('submit', handleRegister);
+    forgotPasswordBtn.addEventListener('click', handleForgotPassword);
+    guestLoginBtn.addEventListener('click', handleGuestLogin);
+    googleLoginBtn.addEventListener('click', handleGoogleLogin);
+    logoutButton.addEventListener('click', handleLogout);
+
+
+    /* ---------------------------------------------------
+   STEP 2: MOOD CALENDAR GENERATION + FIRESTORE DATA
+----------------------------------------------------*/
+
+const moodCalendarContainer = document.getElementById("mood-calendar");
+
+// Mood colors (same scale as slider)
+const MOOD_COLORS = {
+    1: "#991b1b", // dark red
+    2: "#b91c1c",
+    3: "#dc2626",
+    4: "#f97316",
+    5: "#facc15",
+    6: "#84cc16",
+    7: "#22c55e",
+    8: "#16a34a",
+    9: "#059669",
+    10: "#047857" // dark green
+};
+
+// Current month tracking
+let currentCalendarDate = new Date();
+
+/* RENDER CALENDAR */
+function renderMoodCalendar(moodDataMap = {}) {
+    moodCalendarContainer.innerHTML = "";
+
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+
+    // 1st day of month & total days
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+    // Calendar title
+    const monthName = currentCalendarDate.toLocaleString("en-US", { month: "long" });
+
+    moodCalendarContainer.insertAdjacentHTML("beforebegin",
+        `<h3 class="text-xl font-semibold mb-2 text-center">${monthName} ${year}</h3>`
+    );
+
+    // Add empty boxes for correct alignment
+    for (let i = 0; i < firstDay; i++) {
+        const emptyCell = document.createElement("div");
+        emptyCell.className = "rounded-lg p-3";
+        moodCalendarContainer.appendChild(emptyCell);
+    }
+
+    // Fill calendar days
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateKey = `${year}-${String(month + 1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        const moodValue = moodDataMap[dateKey];
+
+        const dayBox = document.createElement("div");
+        dayBox.className = "rounded-lg p-3 flex flex-col items-center justify-center border border-white/10";
+
+        // Day number
+        const dayLabel = document.createElement("span");
+        dayLabel.className = "text-xs text-slate-300";
+        dayLabel.textContent = day;
+        dayBox.appendChild(dayLabel);
+
+        // Mood dot
+        const dot = document.createElement("div");
+        dot.style.width = "14px";
+        dot.style.height = "14px";
+        dot.style.borderRadius = "50%";
+
+        if (moodValue) {
+            dot.style.background = MOOD_COLORS[moodValue];
+            dot.title = `Mood: ${moodValue}`;
+        } else {
+            dot.style.background = "#94a3b8"; // gray for missing
+        }
+
+        dayBox.appendChild(dot);
+        moodCalendarContainer.appendChild(dayBox);
+    }
+}
+
+/* LOAD FIRESTORE MOOD DATA FOR CALENDAR */
+async function loadMoodCalendarData() {
+    if (!db || !currentUserId) return;
+
+    try {
+        const moodRef = window.firebase.collection(
+            db,
+            `artifacts/${appId}/users/${currentUserId}/mood_data`
+        );
+
+        window.firebase.onSnapshot(moodRef, (snapshot) => {
+            const moodDataMap = {};
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                if (data.date && data.mood) {
+                    moodDataMap[data.date] = data.mood;
+                }
+            });
+
+            // Render updated calendar
+            renderMoodCalendar(moodDataMap);
+        });
+
+    } catch (err) {
+        console.error("Calendar mood load error:", err);
+    }
+}
+
+/* CALL THIS FUNCTION WHEN MOOD TAB OPENS */
+tabs.mood.addEventListener("click", () => {
+    loadMoodCalendarData();
+});
+
+
+    // --- Misc small UX: show example message on load ---
+    window.addEventListener('load', () => {
+        initFirebase();
+        updateTheme('light');
+        updateMoodLabel();
+    });
+
+    </script>
+</body>
+</html>
